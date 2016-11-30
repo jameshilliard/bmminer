@@ -243,6 +243,7 @@ static const char *OSINFO =
 #define _DEVS		"DEVS"
 #define _POOLS		"POOLS"
 #define _SUMMARY	"SUMMARY"
+#define _NONCENUM	"NONCENUM"
 #define _STATUS		"STATUS"
 #define _VERSION	"VERSION"
 #define _MINECONFIG	"CONFIG"
@@ -284,6 +285,8 @@ static const char ISJSON = '{';
 #define JSON_DEVS	JSON1 _DEVS JSON2
 #define JSON_POOLS	JSON1 _POOLS JSON2
 #define JSON_SUMMARY	JSON1 _SUMMARY JSON2
+#define JSON_NONCENUM	JSON1 _NONCENUM JSON2
+
 #define JSON_STATUS	JSON1 _STATUS JSON2
 #define JSON_VERSION	JSON1 _VERSION JSON2
 #define JSON_MINECONFIG	JSON1 _MINECONFIG JSON2
@@ -325,6 +328,7 @@ static const char *JSON_PARAMETER = "parameter";
 #define MSG_SUMM 11
 #define MSG_INVCMD 14
 #define MSG_MISID 15
+#define MSG_NONCE_NUM 16
 
 #define MSG_VERSION 22
 #define MSG_INVJSON 23
@@ -504,6 +508,7 @@ struct CODES {
  },
 
  { SEVERITY_SUCC,  MSG_SUMM,	PARAM_NONE,	"Summary" },
+ { SEVERITY_SUCC,  MSG_NONCE_NUM,PARAM_NONE,"Nonce num" },
  { SEVERITY_ERR,   MSG_INVCMD,	PARAM_NONE,	"Invalid command" },
  { SEVERITY_ERR,   MSG_MISID,	PARAM_NONE,	"Missing device id parameter" },
 #ifdef HAVE_AN_FPGA
@@ -2490,7 +2495,6 @@ static void pgaidentify(struct io_data *io_data, __maybe_unused SOCKETTYPE c, ch
 	}
 }
 #endif
-
 static void poolstatus(struct io_data *io_data, __maybe_unused SOCKETTYPE c, __maybe_unused char *param, bool isjson, __maybe_unused char group)
 {
 	struct api_data *root = NULL;
@@ -2721,6 +2725,24 @@ static void summary(struct io_data *io_data, __maybe_unused SOCKETTYPE c, __mayb
 	if (isjson && io_open)
 		io_close(io_data);
 }
+
+static void noncenum(struct io_data *io_data, __maybe_unused SOCKETTYPE c, __maybe_unused char *param, bool isjson, __maybe_unused char group)
+{
+	struct api_data *root = NULL;
+	bool io_open;
+
+	message(io_data, MSG_NONCE_NUM, 0, NULL, isjson);
+	io_open = io_add(io_data, isjson ? COMSTR JSON_NONCENUM : _NONCENUM COMSTR);
+
+	root = api_add_string(root, "10min nonce",nonce_num10_string, false);
+	root = api_add_string(root, "30min nonce",nonce_num30_string , false);
+	root = api_add_string(root, "60min nonce",nonce_num60_string , false);
+
+	root = print_data(io_data, root, isjson, false);
+	if (isjson && io_open)
+		io_close(io_data);
+}
+
 
 static void pgacount(struct io_data *io_data, __maybe_unused SOCKETTYPE c, __maybe_unused char *param, bool isjson, __maybe_unused char group)
 {
@@ -3277,7 +3299,14 @@ static int itemstats(struct io_data *io_data, int i, char *id, struct cgminer_st
 	struct api_data *root = NULL;
 	double ghs;
 
-	ghs = total_mhashes_done / 1000 / total_secs;
+	
+	ghs = (total_mhashes_done - new_total_mhashes_done)/ 1000 / (total_secs - new_total_secs);
+	if(re_calc_ghs)
+	{
+		new_total_mhashes_done = total_mhashes_done;
+		new_total_secs = total_secs;
+		re_calc_ghs = false;
+	}
 
 	root = api_add_int(root, "STATS", &i, false);
 	root = api_add_string(root, "ID", id, false);
@@ -3286,7 +3315,12 @@ static int itemstats(struct io_data *io_data, int i, char *id, struct cgminer_st
 	root = api_add_timeval(root, "Wait", &(stats->getwork_wait), false);
 	root = api_add_timeval(root, "Max", &(stats->getwork_wait_max), false);
 	root = api_add_timeval(root, "Min", &(stats->getwork_wait_min), false);
+#ifndef USE_BITMAIN_C5
 	root = api_add_mhs(root, "GHS 5s", &(g_displayed_rolling), false);
+#else
+	root = api_add_string(root, "GHS 5s", displayed_hash_rate, false);
+#endif
+
 	root = api_add_mhs(root, "GHS av", &(ghs), false);
 
 	/*
@@ -4132,7 +4166,6 @@ static void lcddata(struct io_data *io_data, __maybe_unused SOCKETTYPE c, __mayb
 	root = api_add_uint(root, "Found Blocks", &found_blocks, true);
 	root = api_add_escape(root, "Current Pool", rpc_url, true);
 	root = api_add_escape(root, "User", rpc_user, true);
-
 	root = print_data(io_data, root, isjson, false);
 	if (isjson && io_open)
 		io_close(io_data);
@@ -4152,6 +4185,7 @@ struct CMDS {
 	{ "edevs",		edevstatus,	false,	true },
 	{ "pools",		poolstatus,	false,	true },
 	{ "summary",		summary,	false,	true },
+	{ "noncenum",		noncenum,	false,	true },
 #ifdef HAVE_AN_FPGA
 	{ "pga",		pgadev,		false,	false },
 	{ "pgaenable",		pgaenable,	true,	false },
